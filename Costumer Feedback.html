@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Customer Feedback</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         background: #f4f4f4; font-family: Arial, Helvetica, sans-serif; color: #333; padding: 16px; }
+  .card { background: #fff; width: 100%; max-width: 400px; padding: 24px; border-radius: 8px;
+          box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+  .card.wide { max-width: 720px; }
+  h2 { text-align: center; margin: 0 0 16px; }
+  input, textarea { width: 100%; padding: 10px; margin-bottom: 12px; border: 1px solid #ccc;
+                    border-radius: 4px; font: inherit; }
+  textarea { height: 130px; resize: vertical; }
+  button { padding: 10px 14px; border: 1px solid #bbb; background: #ddd; border-radius: 4px;
+           cursor: pointer; font: inherit; }
+  button:hover { background: #ccc; }
+  button.full { width: 100%; }
+  button.active { border: 2px solid #000; background: #ccc; }
+  .tabs { display: flex; gap: 10px; margin-bottom: 14px; }
+  .tabs button { flex: 1; }
+  .link { background: none; border: none; color: #1a0dab; text-decoration: underline; padding: 0; }
+  .center { text-align: center; font-size: 14px; margin-top: 12px; }
+  .msg { font-size: 14px; margin-bottom: 10px; min-height: 18px; }
+  .err { color: #c0392b; } .ok { color: #1e8449; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 8px; }
+  th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }
+  th { background: #eee; }
+  td.act { white-space: nowrap; }
+  td.act button { padding: 4px 8px; font-size: 12px; }
+  .item { border: 1px solid #ddd; border-radius: 4px; padding: 8px; margin-bottom: 8px; font-size: 14px; }
+  .item small { color: #777; display: block; margin-bottom: 4px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div class="card" id="loginView">
+  <h2>Login</h2>
+  <div class="msg err" id="loginMsg"></div>
+  <input id="loginUser" placeholder="Username" autocomplete="username">
+  <input id="loginPass" type="password" placeholder="Password" autocomplete="current-password">
+  <button class="full" onclick="login()">Log In</button>
+  <div class="center">Don't have an account? <button class="link" onclick="show('registerView')">Sign Up</button></div>
+</div>
+
+<!-- REGISTER -->
+<div class="card hidden" id="registerView">
+  <h2>Register</h2>
+  <div class="msg err" id="regMsg"></div>
+  <input id="regUser" placeholder="Username" autocomplete="username">
+  <input id="regEmail" type="email" placeholder="Email" autocomplete="email">
+  <input id="regPass" type="password" placeholder="Password" autocomplete="new-password">
+  <input id="regPass2" type="password" placeholder="Confirm Password" autocomplete="new-password">
+  <button class="full" onclick="register()">Sign Up</button>
+  <div class="center">Already have an account? <button class="link" onclick="show('loginView')">Log In</button></div>
+</div>
+
+<!-- USER FEEDBACK -->
+<div class="card hidden" id="userView">
+  <h2>Feedback</h2>
+  <div class="tabs">
+    <button id="tabAdd" class="active" onclick="userTab('add')">Add Feedback</button>
+    <button id="tabEdit" onclick="userTab('edit')">Edit Feedback</button>
+  </div>
+  <div class="msg" id="userMsg"></div>
+
+  <div id="addPane">
+    <label for="fbText">Your Feedback:</label><br><br>
+    <textarea id="fbText" placeholder="Write your feedback here..."></textarea>
+    <button class="full" id="submitBtn" onclick="submitUserFeedback()">Submit</button>
+  </div>
+
+  <div id="listPane" class="hidden"></div>
+  <div class="center"><button class="link" onclick="logout()">Log Out</button></div>
+</div>
+
+<!-- ADMIN DASHBOARD -->
+<div class="card wide hidden" id="adminView">
+  <h2>Admin Feedback Dashboard</h2>
+  <div class="msg" id="adminMsg"></div>
+  <div id="viewBox" class="item hidden"></div>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>ID</th><th>Feedback</th><th>Date</th><th>Actions</th></tr></thead>
+      <tbody id="adminRows"></tbody>
+    </table>
+  </div>
+  <div id="adminForm">
+    <textarea id="adminText" placeholder="Add a new feedback or edit the selected one..."></textarea>
+    <button id="adminSave" onclick="adminSave()">Add Feedback</button>
+    <button id="adminCancel" class="hidden" onclick="adminReset()">Cancel</button>
+  </div>
+  <div class="center"><button class="link" onclick="logout()">Log Out</button></div>
+</div>
+
+<script>
+/* ---------- Storage helpers (localStorage) ---------- */
+const get = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const set = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+const today = () => new Date().toISOString().slice(0, 10);
+
+async function hash(text) {
+  try {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch { return text; }   // fallback if crypto is unavailable
+}
+
+/* Seed admin account + sample feedback on first run */
+async function seed() {
+  if (!get('users', null)) {
+    set('users', [{ username: 'admin', email: 'admin@example.com', password: await hash('admin123'), role: 'admin' }]);
+  }
+  if (!get('feedbacks', null)) {
+    set('feedbacks', [
+      { id: 1, user: 'demo', text: 'This is a great product! Highly recommended.', date: '2024-08-09' },
+      { id: 2, user: 'demo', text: 'I had some issues with the service, but customer support was helpful.', date: '2024-08-08' }
+    ]);
+  }
+}
+
+/* ---------- View handling ---------- */
+const views = ['loginView', 'registerView', 'userView', 'adminView'];
+function show(id) {
+  views.forEach(v => document.getElementById(v).classList.toggle('hidden', v !== id));
+  document.querySelectorAll('.msg').forEach(m => m.textContent = '');
+}
+const say = (id, text, ok) => { const e = document.getElementById(id); e.textContent = text; e.className = 'msg ' + (ok ? 'ok' : 'err'); };
+const esc = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+let current = null;   // logged-in user
+
+/* ---------- Register / Login / Logout ---------- */
+async function register() {
+  const username = regUser.value.trim(), email = regEmail.value.trim();
+  const pass = regPass.value, pass2 = regPass2.value;
+  if (!username || !email || !pass || !pass2) return say('regMsg', 'Please fill in all fields.');
+  if (!/^\S+@\S+\.\S+$/.test(email)) return say('regMsg', 'Enter a valid email address.');
+  if (pass.length < 6) return say('regMsg', 'Password must be at least 6 characters.');
+  if (pass !== pass2) return say('regMsg', 'Passwords do not match.');
+  const users = get('users', []);
+  if (users.some(u => u.username.toLowerCase() === username.toLowerCase()))
+    return say('regMsg', 'That username is already taken.');
+  users.push({ username, email, password: await hash(pass), role: 'user' });
+  set('users', users);
+  show('loginView');
+  say('loginMsg', 'Account created. Please log in.', true);
+  regUser.value = regEmail.value = regPass.value = regPass2.value = '';
+}
+
+async function login() {
+  const username = loginUser.value.trim(), pass = await hash(loginPass.value);
+  const user = get('users', []).find(u => u.username.toLowerCase() === username.toLowerCase() && u.password === pass);
+  if (!user) return say('loginMsg', 'Wrong username or password.');
+  current = user;
+  set('session', user.username);
+  loginUser.value = loginPass.value = '';
+  enter();
+}
+
+function enter() {
+  if (current.role === 'admin') { adminReset(); renderAdmin(); show('adminView'); }
+  else { userTab('add'); show('userView'); }
+}
+
+function logout() { current = null; localStorage.removeItem('session'); show('loginView'); }
+
+/* ---------- User: add / edit own feedback ---------- */
+let editingId = null;
+
+function userTab(tab) {
+  tabAdd.classList.toggle('active', tab === 'add');
+  tabEdit.classList.toggle('active', tab === 'edit');
+  userMsg.textContent = '';
+  if (tab === 'add') {
+    editingId = null; fbText.value = ''; submitBtn.textContent = 'Submit';
+    addPane.classList.remove('hidden'); listPane.classList.add('hidden');
+  } else {
+    addPane.classList.add('hidden'); listPane.classList.remove('hidden');
+    renderMine();
+  }
+}
+
+function renderMine() {
+  const mine = get('feedbacks', []).filter(f => f.user === current.username);
+  listPane.innerHTML = mine.length
+    ? mine.map(f => `<div class="item"><small>#${f.id} · ${f.date}</small>${esc(f.text)}<br><br>
+        <button onclick="startEdit(${f.id})">Edit</button></div>`).join('')
+    : '<p class="center">You have not submitted any feedback yet. Use "Add Feedback" to write one.</p>';
+}
+
+function startEdit(id) {
+  const f = get('feedbacks', []).find(x => x.id === id && x.user === current.username);
+  if (!f) return;
+  editingId = id; fbText.value = f.text; submitBtn.textContent = 'Update';
+  addPane.classList.remove('hidden'); listPane.classList.add('hidden');
+}
+
+function submitUserFeedback() {
+  const text = fbText.value.trim();
+  if (!text) return say('userMsg', 'Please write some feedback first.');
+  const list = get('feedbacks', []);
+  if (editingId) {
+    const f = list.find(x => x.id === editingId && x.user === current.username);
+    if (f) { f.text = text; f.date = today(); }
+    set('feedbacks', list);
+    say('userMsg', 'Feedback updated.', true);
+    userTab('edit');
+    say('userMsg', 'Feedback updated.', true);
+  } else {
+    const id = list.reduce((m, f) => Math.max(m, f.id), 0) + 1;
+    list.push({ id, user: current.username, text, date: today() });
+    set('feedbacks', list);
+    fbText.value = '';
+    say('userMsg', 'Thank you! Your feedback was submitted.', true);
+  }
+}
+
+/* ---------- Admin: full CRUD ---------- */
+let adminEditId = null;
+let pendingDelete = null;
+
+function renderAdmin() {
+  const list = get('feedbacks', []);
+  adminRows.innerHTML = list.length
+    ? list.map(f => `<tr><td>${f.id}</td><td>${esc(f.text)}</td><td>${f.date}</td>
+        <td class="act"><button onclick="adminView_(${f.id})">View</button>
+        <button onclick="adminEdit(${f.id})">Edit</button>
+        <button onclick="adminDelete(${f.id})">${pendingDelete === f.id ? 'Sure?' : 'Delete'}</button></td></tr>`).join('')
+    : '<tr><td colspan="4">No feedback yet.</td></tr>';
+}
+
+function adminView_(id) {
+  const f = get('feedbacks', []).find(x => x.id === id);
+  if (!f) return;
+  viewBox.innerHTML = `<small>Feedback #${f.id} · By: ${esc(f.user)} · Date: ${f.date}</small>
+    ${esc(f.text)}<br><br><button onclick="viewBox.classList.add('hidden')">Close</button>`;
+  viewBox.classList.remove('hidden');
+  viewBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function adminEdit(id) {
+  const f = get('feedbacks', []).find(x => x.id === id);
+  if (!f) return;
+  adminEditId = id; adminText.value = f.text;
+  adminSave_.textContent = 'Update Feedback';
+  adminCancel.classList.remove('hidden');
+  adminText.focus();
+}
+
+function adminReset() {
+  adminEditId = null; adminText.value = '';
+  adminSave_.textContent = 'Add Feedback';
+  adminCancel.classList.add('hidden');
+}
+
+function adminSave() {
+  const text = adminText.value.trim();
+  if (!text) return say('adminMsg', 'Feedback text cannot be empty.');
+  const list = get('feedbacks', []);
+  if (adminEditId) {
+    const f = list.find(x => x.id === adminEditId);
+    if (f) { f.text = text; f.date = today(); }
+    say('adminMsg', 'Feedback updated.', true);
+  } else {
+    const id = list.reduce((m, f) => Math.max(m, f.id), 0) + 1;
+    list.push({ id, user: current.username, text, date: today() });
+    say('adminMsg', 'Feedback added.', true);
+  }
+  set('feedbacks', list);
+  adminReset(); renderAdmin();
+}
+
+function adminDelete(id) {
+  if (pendingDelete !== id) { pendingDelete = id; renderAdmin(); return; }   // first click: ask "Sure?"
+  pendingDelete = null;
+  set('feedbacks', get('feedbacks', []).filter(f => f.id !== id));
+  if (adminEditId === id) adminReset();
+  viewBox.classList.add('hidden');
+  renderAdmin();
+  say('adminMsg', 'Feedback deleted.', true);
+}
+
+/* ---------- Start ---------- */
+const adminSave_ = document.getElementById('adminSave');
+seed().then(() => {
+  const name = localStorage.getItem('session');
+  const u = name && get('users', []).find(x => x.username === name);
+  if (u) { current = u; enter(); }
+});
+</script>
+</body>
+</html>
